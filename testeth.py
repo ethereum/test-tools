@@ -13,6 +13,7 @@ from subprocess import Popen, PIPE
 
 # TODO:
 # 1. Check a tool overhead by executing execution of empty code.
+# 2. Limit the tool name length to make generating reports easier.
 
 class Test(object):
     def __init__(self, desc):
@@ -59,8 +60,11 @@ def load_tests(test_path):
 class ToolConnector(object):
     @staticmethod
     def get(tool):
-        if tool.path.endswith('evm'):
-            return EvmConnector()
+        tool_name = path.basename(tool.path)
+        return {
+            'evm': EvmConnector(),
+            'ethvm': EthvmConnector()
+        }[tool_name]
 
 
 class EvmConnector(ToolConnector):
@@ -78,6 +82,18 @@ class EvmConnector(ToolConnector):
         value = float(m.group(1))
         unit = 1000 if m.group(2) == 'm' else 1000000
         return value / unit
+
+
+class EthvmConnector(ToolConnector):
+    def preprare_args(self, test):
+        args = ['bench',
+                '--code',  test.code,
+                '--input', test.input,
+                '--gas',   str(test.gas)]
+        return args
+
+    def process_output(self, out, err):
+        return float(out)
 
 
 class Tool(object):
