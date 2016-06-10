@@ -24,6 +24,22 @@ class Test(object):
             self.gas = int(exc['gas'], 16)
 
 
+class Result(object):
+    def __init__(self, return_code, out, err):
+        self.return_code = return_code
+        self.out = out
+        self.err = err
+        self.result_processing_error = None
+        self.time = None
+
+    def __str__(self):
+        if self.time:
+            return "{:.3f} ms".format(self.time * 1000)
+        if self.return_code != 0 or self.err:
+            return "Error"
+        return "No timing"
+
+
 def _load_test_file(test_file):
     file_name = path.basename(test_file)
     if file_name.startswith('vmInputLimits'):
@@ -75,13 +91,11 @@ class EvmConnector(ToolConnector):
                 '--gas',   str(test.gas)]
         return args
 
-    def process_output(self, out, err):
-        m = re.search('vm took (\d+(?:\.\d+)?)([mµ])s', out)
-        if not m:
-            raise ValueError(out)
+    def process_result(self, result):
+        m = re.search('vm took (\d+(?:\.\d+)?)([mµ]?)s', result.out)
         value = float(m.group(1))
-        unit = 1000 if m.group(2) == 'm' else 1000000
-        return value / unit
+        unit = {'': 1, 'm': 1000, 'µ': 1000000}[m.group(2)]
+        result.time = value / unit
 
 
 class EthvmConnector(ToolConnector):
@@ -92,8 +106,8 @@ class EthvmConnector(ToolConnector):
                 '--gas',   str(test.gas)]
         return args
 
-    def process_output(self, out, err):
-        return float(out)
+    def process_result(self, result):
+        result.time = float(result.out)
 
 
 class Tool(object):
@@ -119,8 +133,12 @@ class Tool(object):
         # print(' '.join(args))
         ps = Popen(args, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         out, err = ps.communicate()
-        return self.__conn.process_output(out.decode('utf-8'),
-                                          err.decode('utf-8'))
+        res = Result(ps.returncode, out.decode('utf-8'), err.decode('utf-8'))
+        try:
+            self.__conn.process_result(res)
+        except Exception as ex:
+            res.result_processing_error = ex
+        return res
 
 # FIXME: This is a bit overkill as the config file is not human-readable any
 #        more. I think we need to do manual config dumping and loading.
@@ -162,16 +180,25 @@ def test(config, test_path):
     w = max(len(k) for k in report.keys())
     print(' ' * w, end='')
 
+    warnings = []
     for tool in config.tools.values():
         print(" | {:>15}".format(tool.name), end='')
         sys.stdout.flush()
         for name, test in tests.items():
-            report[name].append(tool.execute_test(test))
+            res = tool.execute_test(test)
+            report[name].append(res)
+            if res.result_processing_error:
+                warnings.append("Result processing error: {}\n\tOutput: {}"
+                                .format(res.result_processing_error, res.out))
 
     print('\n' + '-' * (w + len(config.tools) * 18))
-    fmt = "{:<" + str(w) + "}" + len(config.tools) * " | {:12.3f} ms"
-    for name, timings in report.items():
-        print(fmt.format(name, *(t * 1000 for t in timings)))
+    fmt = "{:<" + str(w) + "}" + len(config.tools) * " | {:>15}"
+    for name, res in report.items():
+        print(fmt.format(name, *(str(r) for r in res)))
+
+    if warnings:
+        print("\nWARNINGS:")
+        print(*warnings)
 
 
 @testeth.group()
