@@ -14,22 +14,31 @@ from subprocess import Popen, PIPE
 # TODO:
 # 1. Check a tool overhead by executing execution of empty code.
 
+class Test(object):
+    def __init__(self, desc):
+        if 'exec' in desc:
+            exc = desc['exec']
+            self.code = exc['code'][2:]  # Strip leading 0x prefix
+            self.input = exc['data'][2:]
+            self.gas = int(exc['gas'], 16)
+
 
 def _load_test_file(test_file):
-    if path.basename(test_file).startswith('vmInputLimits'):
+    file_name = path.basename(test_file)
+    if file_name.startswith('vmInputLimits'):
         return {}
 
-    _, ext = path.splitext(test_file)
+    _, ext = path.splitext(file_name)
     if ext == '.json':
-        tests = json.load(open(test_file), object_pairs_hook=OrderedDict)
+        json_tests = json.load(open(test_file), object_pairs_hook=OrderedDict)
     else:
         raise ValueError('Unsupported test file format: {}'.format(ext))
 
     # Add path to the test names to asure uniqueness.
-    renamed_tests = OrderedDict()
-    for name, test in tests.items():
-        renamed_tests[test_file + '@' + name] = test
-    return renamed_tests
+    tests = OrderedDict()
+    for name, desc in json_tests.items():
+        tests[file_name + '@' + name] = Test(desc)
+    return tests
 
 
 def _load_tests_from_folder(folder):
@@ -56,14 +65,10 @@ class ToolConnector(object):
 
 class EvmConnector(ToolConnector):
     def preprare_args(self, test):
-        test = test['exec']
-        # FIXME: Preprocess and canonicalize the test data.
-        code = test['code'][2:]  # Strip leading 0x prefix
-        data = test['data'][2:]
         args = ['--sysstat',
-                '--code',  code,
-                '--input', data,
-                '--gas',   test['gas']]
+                '--code',  test.code,
+                '--input', test.input,
+                '--gas',   str(test.gas)]
         return args
 
     def process_output(self, out, err):
