@@ -26,7 +26,8 @@ class Test(object):
 
 
 class Result(object):
-    def __init__(self, return_code, out, err):
+    def __init__(self, args, return_code, out, err):
+        self.args = args
         self.return_code = return_code
         self.out = out
         self.err = err
@@ -109,10 +110,11 @@ class EvmConnector(ToolConnector):
 
 class EthvmConnector(ToolConnector):
     def preprare_args(self, test):
+        gas = test.gas + 50000  # FIXME: ethvm uses gas also on a transaction.
         args = ['bench',
                 '--code',  test.code,
                 '--input', test.input,
-                '--gas',   str(test.gas)]
+                '--gas',   str(gas)]
         return args
 
     def process_result(self, result):
@@ -142,7 +144,8 @@ class Tool(object):
         # print(' '.join(args))
         ps = Popen(args, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         out, err = ps.communicate()
-        res = Result(ps.returncode, out.decode('utf-8'), err.decode('utf-8'))
+        res = Result(args, ps.returncode,
+                     out.decode('utf-8'), err.decode('utf-8'))
         try:
             self.__conn.process_result(res)
         except Exception as ex:
@@ -193,9 +196,15 @@ def test(config, test_path):
         for name, test in tests.items():
             res = tool.execute_test(test)
             results.append(res.value())
-            if res.result_processing_error:
-                warnings.append("Result processing error: {}\n\tOutput: {}"
-                                .format(res.result_processing_error, res.out))
+            if res.return_code != 0:
+                warnings.append("Error {}:\n{}\n*** Command: {}"
+                                .format(res.return_code, res.err,
+                                        ' '.join(res.args)))
+            elif res.result_processing_error:
+                warnings.append("Result processing error: {}\n"
+                                "*** Output:\n{}\n*** Command: {}"
+                                .format(res.result_processing_error, res.out,
+                                        ' '.join(res.args)))
         report[tool.name] = results
 
     print()
