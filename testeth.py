@@ -128,16 +128,6 @@ class Tool(object):
         self.params = params
         self.__conn = ToolConnector.get(self)
 
-    @staticmethod
-    def yaml_representer(dumper, obj):
-        data = {'name': obj.name, 'path': obj.path, 'params': obj.params}
-        return dumper.represent_mapping('!tool', data)
-
-    @staticmethod
-    def yaml_constructor(loader, node):
-        data = loader.construct_mapping(node)
-        return Tool(data['name'], data['path'], data['params'])
-
     def execute_test(self, test):
         args = self.__conn.preprare_args(test)
         args = [self.path] + list(self.params) + args
@@ -152,26 +142,40 @@ class Tool(object):
             res.result_processing_error = ex
         return res
 
-# FIXME: This is a bit overkill as the config file is not human-readable any
-#        more. I think we need to do manual config dumping and loading.
-yaml.add_representer(Tool, Tool.yaml_representer)
-yaml.add_constructor('!tool', Tool.yaml_constructor)
-
 
 class Config(object):
     config_file = path.join(path.dirname(__file__), 'testeth.yml')
 
     def __init__(self):
-        self.tools = OrderedDict()
+        self.tools = []
 
     @classmethod
     def load(cls):
         if path.exists(cls.config_file):
-            return yaml.load(open(cls.config_file))
-        return cls()
+            config = yaml.load(open(cls.config_file))
+            if type(config) is not dict:
+                return cls()
+            if 'tools' in config:
+                tools = []
+                for name, desc in config['tools'].items():
+                    tool = Tool(name, desc['path'], None)
+                    if 'params' in desc:
+                        tool.params = desc['params'].split()
+                    tools.append(tool)
+                tools.sort(key=lambda t: t.name)
+        config = cls()
+        config.tools = tools
+        return config
 
     def save(self):
-        yaml.dump(self, open(self.config_file, 'w'))
+        tools = {}
+        for tool in self.tools:
+            desc = {'path': tool.path}
+            if tool.params:
+                desc['params'] = ' '.join(tool.params)
+            tools[tool.name] = desc
+        yaml.dump({'tools': tools}, open(self.config_file, 'w'),
+                  default_flow_style=False)
 
 
 @click.group()
@@ -189,7 +193,7 @@ def test(config, test_path):
     report = OrderedDict()
     report['Tests'] = tests.keys()
     warnings = []
-    for tool in config.tools.values():
+    for tool in config.tools:
         print("> {} ...".format(tool.name))
         sys.stdout.flush()
         results = []
@@ -217,13 +221,15 @@ def test(config, test_path):
 
 @testeth.group()
 def tool():
+    """ Manage the tools."""
     pass
 
 
 @tool.command('list')
 @click.pass_obj
 def list_tools(config):
-    for tool in config.tools.values():
+    """ List registered tools."""
+    for tool in config.tools:
         print("{:<16}{} {}".format(tool.name, tool.path,
                                    ' '.join(tool.params)))
 
@@ -234,9 +240,16 @@ def list_tools(config):
 @click.argument('path', type=click.Path())
 @click.argument('params', nargs=-1, type=click.UNPROCESSED)
 def register_tool(config, name, path, params):
+    """ Register new tool.
+
+        \b
+        :param name:   Tool registration name.
+        :param path:   Path to the tool exacutable.
+        :param params: Additional params used to invoce the tool.
+    """
     # TODO: Try get version number
     tool = Tool(name, path, params)
-    config.tools[tool.name] = tool
+    config.tools.append(tool)
     config.save()
 
 
