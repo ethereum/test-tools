@@ -9,6 +9,7 @@ import yaml
 from collections import OrderedDict
 from os import path, walk
 from subprocess import Popen, PIPE
+from tabulate import tabulate
 
 
 # TODO:
@@ -32,12 +33,20 @@ class Result(object):
         self.result_processing_error = None
         self.time = None
 
-    def __str__(self):
-        if self.time:
-            return "{:.3f} ms".format(self.time * 1000)
+    def value(self):
+        """ Return single-value representation to be used in reports."""
+
+        if self.time is not None:
+            return self.time * 1000  # Return time in milliseconds.
         if self.return_code != 0 or self.err:
-            return "Error"
-        return "No timing"
+            return "Error"           # Tool returned error.
+        return "No timing"           # No timing found in tool output.
+
+    def __str__(self):
+        v = self.value()
+        if self.time is not None:
+            return "{:.3f} ms".format(v)
+        return v
 
 
 def _load_test_file(test_file):
@@ -173,28 +182,24 @@ def testeth(ctx):
 @click.argument('test_path', type=click.Path())
 def test(config, test_path):
     tests = load_tests(test_path)
+
     report = OrderedDict()
-    for name in tests.keys():
-        report[name] = []
-
-    w = max(len(k) for k in report.keys())
-    print(' ' * w, end='')
-
+    report['Tests'] = tests.keys()
     warnings = []
     for tool in config.tools.values():
-        print(" | {:>15}".format(tool.name), end='')
+        print("> {} ...".format(tool.name))
         sys.stdout.flush()
+        results = []
         for name, test in tests.items():
             res = tool.execute_test(test)
-            report[name].append(res)
+            results.append(res.value())
             if res.result_processing_error:
                 warnings.append("Result processing error: {}\n\tOutput: {}"
                                 .format(res.result_processing_error, res.out))
+        report[tool.name] = results
 
-    print('\n' + '-' * (w + len(config.tools) * 18))
-    fmt = "{:<" + str(w) + "}" + len(config.tools) * " | {:>15}"
-    for name, res in report.items():
-        print(fmt.format(name, *(str(r) for r in res)))
+    print()
+    print(tabulate(report, headers='keys', floatfmt=".3f"))
 
     if warnings:
         print("\nWARNINGS:")
