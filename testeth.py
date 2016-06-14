@@ -13,16 +13,35 @@ from tabulate import tabulate
 
 
 # TODO:
-# 1. Check a tool overhead by executing execution of empty code.
-# 2. Limit the tool name length to make generating reports easier.
+# - Check a tool overhead by executing execution of empty code.
+# - Limit the tool name length to make generating reports easier.
+# - Add test verification.
 
 class Test(object):
     def __init__(self, desc):
-        if 'exec' in desc:
+        if 'exec' in desc:  # JSON format.
             exc = desc['exec']
             self.code = exc['code'][2:]  # Strip leading 0x prefix
             self.input = exc['data'][2:]
             self.gas = int(exc['gas'], 16)
+        else:
+            self.code = desc['code']
+            self.gas = desc.get('gas')
+            self.input = desc.get('input', '')
+            self.expected = TestResult()
+            expected = desc.get('expected', {})
+            self.expected.output = expected.get('output')
+            self.expected.gas_used = expected.get('gas used')
+            self.expected.exception = expected.get('exception', False)
+
+
+class TestResult(object):
+    """ Represents test expected/actual result. None value means don't care."""
+
+    def __init__(self):
+        self.output = None
+        self.gas_used = None
+        self.exception = False
 
 
 class Result(object):
@@ -57,13 +76,15 @@ def _load_test_file(test_file):
 
     _, ext = path.splitext(file_name)
     if ext == '.json':
-        json_tests = json.load(open(test_file), object_pairs_hook=OrderedDict)
+        descs = json.load(open(test_file), object_pairs_hook=OrderedDict)
+    elif ext == '.yml':
+        descs = yaml.load(open(test_file))
     else:
         raise ValueError('Unsupported test file format: {}'.format(ext))
 
     # Add path to the test names to asure uniqueness.
     tests = OrderedDict()
-    for name, desc in json_tests.items():
+    for name, desc in descs.items():
         tests[file_name + '@' + name] = Test(desc)
     return tests
 
@@ -159,7 +180,7 @@ class Config(object):
             if 'tools' in config:
                 tools = []
                 for name, desc in config['tools'].items():
-                    tool = Tool(name, desc['path'], None)
+                    tool = Tool(name, desc['path'], ())
                     if 'params' in desc:
                         tool.params = desc['params'].split()
                     tools.append(tool)

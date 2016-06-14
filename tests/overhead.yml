@@ -1,0 +1,12 @@
+stop:
+  code: '00'
+  gas: 1
+  expected:
+    output: ''
+    gas used: 0
+
+exception:
+  code: '01'
+  gas: 1
+  expected:
+    exception: true
