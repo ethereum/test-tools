@@ -4,7 +4,6 @@ from __future__ import print_function
 import click
 import json
 import re
-import sys
 import yaml
 from collections import OrderedDict
 from os import path, walk
@@ -74,23 +73,6 @@ class Result(object):
         self.result_processing_error = None
         self.time = None
         self.test_result = TestResult()
-
-    def value(self, expected):
-        """ Return single-value representation to be used in reports."""
-
-        if self.test_result != expected:
-            return "Failure"
-        if self.time is not None:
-            return self.time * 1000  # Return time in milliseconds.
-        if self.return_code != 0 or self.err:
-            return "Error"           # Tool returned error.
-        return "No timing"           # No timing found in tool output.
-
-    def __str__(self):
-        v = self.value()
-        if self.time is not None:
-            return "{:.3f} ms".format(v)
-        return v
 
 
 def _load_test_file(test_file):
@@ -204,6 +186,56 @@ class Tool(object):
         return res
 
 
+def process_result(res, expected):
+    if res.return_code != 0:
+        err = "Error {}:\n{}\n*** Command: {}".format(res.return_code, res.err,
+                                                      ' '.join(res.args))
+        return "Error", err
+
+    if res.result_processing_error:
+        err = "Result processing error: {}\n"\
+              "*** Output:\n{}\n*** Command: {}"\
+              .format(res.result_processing_error, res.out,
+                      ' '.join(res.args))
+        return "Error", err
+
+    if res.test_result != expected:
+        err = "\tResult:   {}\n\tExpected: {}".format(res.test_result.__dict__,
+                                                      expected.__dict__)
+        return "Failure", err
+
+    if res.time is not None:
+        return res.time * 1000, None  # Return time in milliseconds.
+    return "No timing", None
+
+
+def run_tests(tools, tests):
+    report = OrderedDict()
+    report['Tests [ms]'] = tests.keys()
+    errors = []
+    for tool in tools:
+        print("> {} ...".format(tool.name))
+        results = []
+        for name, test in tests.items():
+            res = tool.execute_test(test)
+            res_value, err = process_result(res, test.expected)
+            results.append(res_value)
+            if err:
+                msg = "{} of {} in {}\n\tCommand: {}\n".format(
+                    res_value, tool.name, name, ' '.join(res.args)
+                )
+                errors.append(msg + err)
+        report[tool.name] = results
+
+    print()
+    print(tabulate(report, headers='keys', floatfmt=".3f"))
+
+    if errors:
+        print("\nERRORS:")
+        for err in errors:
+            print(err)
+
+
 class Config(object):
     config_file = path.join(path.dirname(__file__), 'testeth.yml')
 
@@ -250,34 +282,7 @@ def testeth(ctx):
 @click.argument('test_path', type=click.Path())
 def test(config, test_path):
     tests = load_tests(test_path)
-
-    report = OrderedDict()
-    report['Tests'] = tests.keys()
-    warnings = []
-    for tool in config.tools:
-        print("> {} ...".format(tool.name))
-        sys.stdout.flush()
-        results = []
-        for name, test in tests.items():
-            res = tool.execute_test(test)
-            results.append(res.value(test.expected))
-            if res.return_code != 0:
-                warnings.append("Error {}:\n{}\n*** Command: {}"
-                                .format(res.return_code, res.err,
-                                        ' '.join(res.args)))
-            elif res.result_processing_error:
-                warnings.append("Result processing error: {}\n"
-                                "*** Output:\n{}\n*** Command: {}"
-                                .format(res.result_processing_error, res.out,
-                                        ' '.join(res.args)))
-        report[tool.name] = results
-
-    print()
-    print(tabulate(report, headers='keys', floatfmt=".3f"))
-
-    if warnings:
-        print("\nWARNINGS:")
-        print(*warnings)
+    run_tests(config.tools, tests)
 
 
 @testeth.group()
