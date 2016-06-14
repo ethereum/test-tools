@@ -19,16 +19,23 @@ from tabulate import tabulate
 
 class Test(object):
     def __init__(self, desc):
+        self.expected = TestResult()
         if 'exec' in desc:  # JSON format.
             exc = desc['exec']
             self.code = exc['code'][2:]  # Strip leading 0x prefix
             self.input = exc['data'][2:]
             self.gas = int(exc['gas'], 16)
+
+            # No expected gas means exception expected
+            self.expected.exception = 'gas' not in desc
+            if not self.expected.exception:
+                self.expected.output = desc['out'][2:]
+                gas_left = int(desc['gas'], 16)
+                self.expected.gas_used = self.gas - gas_left
         else:
             self.code = desc['code']
             self.gas = desc.get('gas')
             self.input = desc.get('input', '')
-            self.expected = TestResult()
             expected = desc.get('expected', {})
             self.expected.output = expected.get('output')
             self.expected.gas_used = expected.get('gas used')
@@ -41,7 +48,21 @@ class TestResult(object):
     def __init__(self):
         self.output = None
         self.gas_used = None
-        self.exception = False
+        self.exception = None
+
+    def __eq__(self, other):
+        """ Compare test results. If any of attribute values is None ignore
+            comparison."""
+
+        for attr, value in self.__dict__.items():
+            if value is None:
+                continue
+            o = getattr(other, attr)
+            if o is None:
+                continue
+            if o != value:
+                return False
+        return True
 
 
 class Result(object):
@@ -52,10 +73,13 @@ class Result(object):
         self.err = err
         self.result_processing_error = None
         self.time = None
+        self.test_result = TestResult()
 
-    def value(self):
+    def value(self, expected):
         """ Return single-value representation to be used in reports."""
 
+        if self.test_result != expected:
+            return "Failure"
         if self.time is not None:
             return self.time * 1000  # Return time in milliseconds.
         if self.return_code != 0 or self.err:
@@ -116,10 +140,13 @@ class ToolConnector(object):
 
 class EvmConnector(ToolConnector):
     def preprare_args(self, test):
-        args = ['--sysstat',
-                '--code',  test.code,
-                '--input', test.input,
-                '--gas',   str(test.gas)]
+        args = ['--sysstat']
+        if test.code:
+            args += ('--code', test.code)
+        if test.input:
+            args += ('--input', test.input)
+        if test.gas:
+            args += ('--gas', str(test.gas))
         return args
 
     def process_result(self, result):
@@ -128,19 +155,31 @@ class EvmConnector(ToolConnector):
         unit = {'': 1, 'm': 1000, 'µ': 1000000}[m.group(2)]
         result.time = value / unit
 
+        m = re.search('OUT: 0x([0-9a-f]*)', result.out)
+        result.test_result.output = m.group(1)
+
+        result.test_result.exception = (result.out.find('error: ') != -1)
+
 
 class EthvmConnector(ToolConnector):
     def preprare_args(self, test):
-        gas = test.gas + 50000  # FIXME: ethvm uses gas also on a transaction.
-        args = ['test',
-                '--code',  test.code,
-                '--input', test.input,
-                '--gas',   str(gas)]
+        args = ['test', ]
+        if test.code:
+            args += ('--code', test.code)
+        if test.input:
+            args += ('--input', test.input)
+        if test.gas:
+            gas = test.gas + 50000  # FIXME: ethvm uses gas also on a tx.
+            args += ('--gas', str(gas))
         return args
 
     def process_result(self, result):
         out = yaml.load(result.out)
         result.time = out.get('exec time')
+        tres = result.test_result
+        tres.exception = out.get('exception', False)
+        tres.gas_used = out.get('gas used')
+        tres.output = out.get('output')
 
 
 class Tool(object):
@@ -221,7 +260,7 @@ def test(config, test_path):
         results = []
         for name, test in tests.items():
             res = tool.execute_test(test)
-            results.append(res.value())
+            results.append(res.value(test.expected))
             if res.return_code != 0:
                 warnings.append("Error {}:\n{}\n*** Command: {}"
                                 .format(res.return_code, res.err,

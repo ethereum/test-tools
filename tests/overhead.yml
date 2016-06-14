@@ -10,3 +10,10 @@ exception:
   gas: 1
   expected:
     exception: true
+
+return input size:
+  code: '3660005260206000f3'     # RETURN(CALLDATASIZE)
+  input: '00000000000000000000'  # 10 bytes
+  expected:
+    output: '000000000000000000000000000000000000000000000000000000000000000a'
+    gas used: 17
