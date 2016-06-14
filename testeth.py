@@ -111,14 +111,15 @@ class EvmConnector(ToolConnector):
 class EthvmConnector(ToolConnector):
     def preprare_args(self, test):
         gas = test.gas + 50000  # FIXME: ethvm uses gas also on a transaction.
-        args = ['bench',
+        args = ['test',
                 '--code',  test.code,
                 '--input', test.input,
                 '--gas',   str(gas)]
         return args
 
     def process_result(self, result):
-        result.time = float(result.out)
+        out = yaml.load(result.out)
+        result.time = out.get('exec time')
 
 
 class Tool(object):
