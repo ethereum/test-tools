@@ -10,6 +10,10 @@ from os import path, walk
 from subprocess import Popen, PIPE
 from tabulate import tabulate
 
+# Enforce OrderedDict for YAML loading
+yaml.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+                     lambda loader, n: OrderedDict(loader.construct_pairs(n)))
+
 
 # TODO:
 # - Check a tool overhead by executing execution of empty code.
@@ -246,8 +250,6 @@ class Config(object):
     def load(cls):
         if path.exists(cls.config_file):
             config = yaml.load(open(cls.config_file))
-            if type(config) is not dict:
-                return cls()
             if 'tools' in config:
                 tools = []
                 for name, desc in config['tools'].items():
