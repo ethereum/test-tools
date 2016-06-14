@@ -146,6 +146,8 @@ class EvmConnector(ToolConnector):
 
         result.test_result.exception = (result.out.find('error: ') != -1)
 
+        # FIXME: Get unsed gas
+
 
 class EthvmConnector(ToolConnector):
     def preprare_args(self, test):
